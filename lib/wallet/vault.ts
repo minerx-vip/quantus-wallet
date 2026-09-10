@@ -1,6 +1,7 @@
 export const VAULT_KEY = 'quantus.wallet.v1';
 const ITERATIONS = 600_000;
 const AAD = new TextEncoder().encode('quantus-wallet:v1');
+export type Derivation = 'hd65' | 'hd87' | 'legacy87';
 export type WalletRecord = {
   id: string;
   name: string;
@@ -8,6 +9,7 @@ export type WalletRecord = {
   type: 'mnemonic' | 'seed';
   secret: string;
   accountIndex: number;
+  derivation?: Derivation;
   createdAt: string;
 };
 export type VaultData = { wallets: WalletRecord[]; selectedId: string };
@@ -89,6 +91,12 @@ export function validateVault(data: VaultData) {
       typeof w.secret !== 'string' ||
       w.secret.length > 1000 ||
       !['mnemonic', 'seed'].includes(w.type) ||
+      (w.derivation !== undefined &&
+        !['hd65', 'hd87', 'legacy87'].includes(w.derivation)) ||
+      (w.type === 'seed' &&
+        w.derivation !== undefined &&
+        w.derivation !== 'hd87') ||
+      (w.derivation === 'legacy87' && w.accountIndex !== 0) ||
       !Number.isInteger(w.accountIndex) ||
       w.accountIndex < 0 ||
       w.accountIndex > 1000000

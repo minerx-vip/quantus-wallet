@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use parity_scale_codec::{Compact, Encode};
 use qp_poseidon_core::hash_bytes;
-use qp_rusty_crystals_dilithium::{ml_dsa_87, SensitiveBytes32};
+use qp_rusty_crystals_dilithium::{ml_dsa_65, ml_dsa_87, SensitiveBytes32};
 use sp_core::{
     crypto::{AccountId32, Ss58AddressFormat, Ss58Codec},
     hashing::blake2_256,
@@ -23,6 +23,7 @@ pub const SS58_PREFIX: u16 = 189;
 /// Extrinsic format version (v4, signed).
 pub const EXTRINSIC_VERSION: u8 = 4;
 /// `DilithiumSignatureScheme::Dilithium` enum variant index.
+#[cfg(test)]
 const SIG_VARIANT_DILITHIUM: u8 = 0;
 /// Substrate signs the blake2-256 hash of any signing payload longer than this.
 const PAYLOAD_HASH_THRESHOLD: usize = 256;
@@ -114,13 +115,26 @@ pub fn derive_account(seed: &[u8]) -> Result<AccountKeys, Error> {
 
 /// Account material for an already-derived keypair (seed or HD mnemonic path).
 pub fn derive_account_from_keypair(keypair: &ml_dsa_87::Keypair) -> AccountKeys {
-    let public_key = keypair.public().to_bytes();
-    let account = account_id_from_public(&public_key);
+    account_from_material(
+        &keypair.public().to_bytes(),
+        &keypair.secret().to_bytes()[..],
+    )
+}
+
+pub fn derive_account_from_keypair65(keypair: &ml_dsa_65::Keypair) -> AccountKeys {
+    account_from_material(
+        &keypair.public().to_bytes(),
+        &keypair.secret().to_bytes()[..],
+    )
+}
+
+fn account_from_material(public_key: &[u8], secret_key: &[u8]) -> AccountKeys {
+    let account = account_id_from_public(public_key);
     let mut account_id = [0u8; 32];
     account_id.copy_from_slice(account.as_ref());
     AccountKeys {
         public_key: public_key.to_vec(),
-        secret_key: keypair.secret().to_bytes().to_vec(),
+        secret_key: secret_key.to_vec(),
         account_id,
         address: account.to_ss58check_with_version(Ss58AddressFormat::custom(SS58_PREFIX)),
     }
@@ -140,9 +154,42 @@ pub fn sign_call_with_keypair(
     call: &[u8],
     ctx: &SignContext,
 ) -> Result<Vec<u8>, Error> {
-    let public_key = keypair.public().to_bytes();
-    let account = account_id_from_public(&public_key);
+    assemble_signed_call(&keypair.public().to_bytes(), 0, call, ctx, |payload| {
+        sign_payload_context(keypair, payload, ctx.spec_version >= 148)
+    })
+}
 
+pub fn sign_call_with_keypair65(
+    keypair: &ml_dsa_65::Keypair,
+    call: &[u8],
+    ctx: &SignContext,
+) -> Result<Vec<u8>, Error> {
+    assemble_signed_call(&keypair.public().to_bytes(), 1, call, ctx, |payload| {
+        let context: Option<&[u8]> = if ctx.spec_version >= 148 {
+            Some(b"QUANTUS_EXTRINSIC")
+        } else {
+            None
+        };
+        let message = if payload.len() > PAYLOAD_HASH_THRESHOLD {
+            blake2_256(payload).to_vec()
+        } else {
+            payload.to_vec()
+        };
+        keypair
+            .sign(&message, context, None)
+            .map(|s| s.to_vec())
+            .map_err(|_| Error::SigningFailed)
+    })
+}
+
+fn assemble_signed_call(
+    public_key: &[u8],
+    variant: u8,
+    call: &[u8],
+    ctx: &SignContext,
+    sign: impl FnOnce(&[u8]) -> Result<Vec<u8>, Error>,
+) -> Result<Vec<u8>, Error> {
+    let account = account_id_from_public(public_key);
     let (era, era_checkpoint_hash) = resolve_era(ctx)?;
 
     // `extra`: included in both the extrinsic and the signed payload.
@@ -155,11 +202,11 @@ pub fn sign_call_with_keypair(
     payload.extend_from_slice(&extra);
     payload.extend_from_slice(&implicit);
 
-    let signature = sign_payload_context(keypair, &payload, ctx.spec_version >= 148)?;
+    let signature = sign(&payload)?;
 
     // DilithiumSignatureScheme::Dilithium(sig || public) encoding.
     let mut signature_field = Vec::with_capacity(1 + signature.len() + public_key.len());
-    signature_field.push(SIG_VARIANT_DILITHIUM);
+    signature_field.push(variant);
     signature_field.extend_from_slice(&signature);
     signature_field.extend_from_slice(&public_key);
 
@@ -534,5 +581,51 @@ mod tests {
         let via_transfer = sign_transfer(&seed, &p).unwrap();
         let via_call = sign_call(&seed, &call, &p.ctx).unwrap();
         assert_eq!(via_transfer, via_call);
+    }
+    #[test]
+    fn ml_dsa_65_signature_matches_chain_encoding_and_context() {
+        use sp_core::ByteArray;
+        let pair = ml_dsa_65::Keypair::generate(&mut SensitiveBytes32::new(&mut [7u8; 32]));
+        for call in [vec![2, 3, 0, 4], vec![7; 300]] {
+            let mut ctx = sample_ctx();
+            ctx.spec_version = 152;
+            ctx.transaction_version = 6;
+            let xt = sign_call_with_keypair65(&pair, &call, &ctx).unwrap();
+            let mut body = &xt[..];
+            let length = Compact::<u32>::decode(&mut body).unwrap().0 as usize;
+            assert_eq!(length, body.len());
+            assert_eq!(body[34], 1);
+            let (era, hash) = resolve_era(&ctx).unwrap();
+            let mut payload = call.clone();
+            payload.extend(encode_extra(&era, ctx.nonce, ctx.tip));
+            payload.extend(encode_implicit(&ctx, hash));
+            let mut signable = if payload.len() > 256 {
+                blake2_256(&payload).to_vec()
+            } else {
+                payload
+            };
+            let signature = &body[35..35 + ml_dsa_65::SIGNBYTES];
+            assert!(pair
+                .public()
+                .verify(&signable, signature, Some(b"QUANTUS_EXTRINSIC")));
+            assert!(!pair.public().verify(&signable, signature, None));
+            signable[0] ^= 1;
+            assert!(!pair
+                .public()
+                .verify(&signable, signature, Some(b"QUANTUS_EXTRINSIC")));
+            let canonical = qp_dilithium_crypto::DilithiumSignatureScheme::Dilithium65(
+                qp_dilithium_crypto::Dilithium65SignatureWithPublic::new(
+                    qp_dilithium_crypto::Dilithium65Signature::from_slice(signature).unwrap(),
+                    qp_dilithium_crypto::Dilithium65Public::from_slice(&pair.public().to_bytes())
+                        .unwrap(),
+                ),
+            )
+            .encode();
+            assert_eq!(&body[34..34 + canonical.len()], &canonical);
+            assert_eq!(
+                &body[2..34],
+                &derive_account_from_keypair65(&pair).account_id
+            );
+        }
     }
 }

@@ -120,3 +120,99 @@ test('browser WASM derives distinct HD accounts and strips only signatures for f
   assert.notEqual(feeOnlyExtrinsic(encoded), encoded);
   for (const x of [a, b, hd0, hd1]) x.free();
 });
+
+// Official quantus-apps public test vector. These words are NOT a user's wallet.
+const officialMnemonic =
+  'orchard answer curve patient visual flower maze noise retreat penalty cage small earth domain scan pitch bottom crunch theme club client swap slice raven';
+test('matches official iPhone wallet HD65, HD87 and early non-HD address vectors', async () => {
+  const { deriveWallet, matchMnemonic, signLocal } =
+    await import('../lib/wallet/crypto.ts');
+  const expected = [
+    ['hd65', 0, 'qzoyC4eRTrexYoutXABVsf61QJZxJim3iWvayRQwEjXWgA4mw'],
+    ['hd65', 1, 'qzmTuBUzGHX7tohwjJHASSbCt64cJt6WC6j6v1SHpMTL77UyB'],
+    ['hd87', 0, 'qzm5QCox8Dp5A3oSXZZYHD8YoYgPz7enykZb6RPUropdCyN5h'],
+    ['hd87', 1, 'qzmufPopkLKAwDmTzR5uXg8GMp5sUP48CqafJLUz3fPMSSGSh'],
+    ['legacy87', 0, 'qzmTAz3UUw1WGUuVh8nbFmPwcftomduwy6twq6NDR6y9qqtEs'],
+  ] as const;
+  for (const [derivation, accountIndex, address] of expected) {
+    assert.equal(
+      (
+        await deriveWallet(
+          'mnemonic',
+          officialMnemonic,
+          accountIndex,
+          derivation,
+        )
+      ).address,
+      address,
+    );
+    const record = {
+      id: 'official',
+      name: 'test',
+      type: 'mnemonic' as const,
+      secret: officialMnemonic,
+      derivation,
+      accountIndex,
+      address,
+      createdAt: '',
+    };
+    const session = await createVault('test1234');
+    const restored = (
+      await unlock(
+        await seal(session, { wallets: [record], selectedId: record.id }),
+        'test1234',
+      )
+    ).data.wallets[0];
+    assert.equal(restored.derivation, derivation);
+    const encoded = await signLocal(
+      restored,
+      new Uint8Array([2, 3, 0, ...new Uint8Array(32), 4]),
+      {
+        nonce: 0,
+        tip: '0',
+        period: 0,
+        blockNumber: 0,
+        genesisHash: '0x' + '09'.repeat(32),
+        specVersion: 152,
+        transactionVersion: 6,
+      },
+    );
+    const bytes = Buffer.from(encoded.slice(2), 'hex');
+    const prefix = [1, 2, 4][bytes[0] & 3];
+    assert.equal(bytes[prefix + 34], derivation === 'hd65' ? 1 : 0);
+    const masked = Buffer.from(feeOnlyExtrinsic(encoded).slice(2), 'hex');
+    const sigLength = derivation === 'hd65' ? 3309 : 4627;
+    assert(
+      masked
+        .subarray(prefix + 35, prefix + 35 + sigLength)
+        .every((v) => v === 0),
+    );
+    assert.deepEqual(
+      masked.subarray(prefix + 35 + sigLength),
+      bytes.subarray(prefix + 35 + sigLength),
+    );
+  }
+  assert.equal(
+    (await deriveWallet('mnemonic', officialMnemonic)).address,
+    expected[2][2],
+  );
+  const matched = await matchMnemonic(officialMnemonic, expected[1][2], 0);
+  assert.equal(matched.derivation, 'hd65');
+  assert.equal(matched.accountIndex, 1);
+  await assert.rejects(
+    signLocal(
+      {
+        id: 'bad',
+        name: 'bad',
+        type: 'mnemonic',
+        secret: officialMnemonic,
+        accountIndex: 0,
+        address: expected[0][2],
+        createdAt: '',
+      },
+      new Uint8Array(),
+      {},
+    ),
+    /密钥与钱包地址不一致/,
+  );
+});

@@ -37,6 +37,11 @@ export function account(seed: Uint8Array): Account;
 export function accountFromMnemonic(mnemonic: string, account: number, change: number, address_index: number, passphrase?: string | null): Account;
 
 /**
+ * Current official mobile-wallet ML-DSA-65 path (scheme slot 1).
+ */
+export function accountFromMnemonic65(mnemonic: string, account: number): Account;
+
+/**
  * BIP39 mnemonic -> 64-byte seed (bridge to the seed-based API).
  */
 export function mnemonicToSeed(mnemonic: string, passphrase?: string | null): Uint8Array;
@@ -51,6 +56,8 @@ export function signCall(seed: Uint8Array, call: Uint8Array, context: any): Uint
  * Sign an already-encoded `RuntimeCall` from a mnemonic at the given HD indices.
  */
 export function signCallFromMnemonic(mnemonic: string, call: Uint8Array, context: any, account: number, change: number, address_index: number, passphrase?: string | null): Uint8Array;
+
+export function signCallFromMnemonic65(mnemonic: string, call: Uint8Array, context: any, account: number): Uint8Array;
 
 /**
  * Sign a balances/assets transfer, returning the SCALE-encoded v4 extrinsic.
@@ -69,6 +76,7 @@ export interface InitOutput {
     readonly __wbg_account_free: (a: number, b: number) => void;
     readonly account: (a: number, b: number) => [number, number, number];
     readonly accountFromMnemonic: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
+    readonly accountFromMnemonic65: (a: number, b: number, c: number) => [number, number, number];
     readonly account_accountId: (a: number) => [number, number];
     readonly account_address: (a: number) => [number, number];
     readonly account_publicKey: (a: number) => [number, number];
@@ -76,6 +84,7 @@ export interface InitOutput {
     readonly mnemonicToSeed: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly signCall: (a: number, b: number, c: number, d: number, e: any) => [number, number, number, number];
     readonly signCallFromMnemonic: (a: number, b: number, c: number, d: number, e: any, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
+    readonly signCallFromMnemonic65: (a: number, b: number, c: number, d: number, e: any, f: number) => [number, number, number, number];
     readonly signTransfer: (a: number, b: number, c: any) => [number, number, number, number];
     readonly signTransferFromMnemonic: (a: number, b: number, c: any, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;

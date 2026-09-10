@@ -87,3 +87,34 @@ pub fn mnemonic_to_seed_js(
         .map(|_| seed.as_bytes().to_vec())
         .map_err(|e| JsError::new(&alloc::format!("mnemonic_to_seed failed: {e}")))
 }
+
+/// Current official mobile-wallet ML-DSA-65 path (scheme slot 1).
+#[wasm_bindgen(js_name = accountFromMnemonic65)]
+pub fn account_from_mnemonic65(mnemonic: &str, account: u32) -> Result<Account, JsError> {
+    let pair = qp_rusty_crystals_hdwallet::ml_dsa_65::derive_key_from_mnemonic(
+        mnemonic,
+        None,
+        &quantus_path(account, 0, 1),
+    )
+    .map_err(|_| JsError::new("mnemonic derivation failed"))?;
+    Ok(crate::account_from_keys(
+        ext::derive_account_from_keypair65(&pair),
+    ))
+}
+
+#[wasm_bindgen(js_name = signCallFromMnemonic65)]
+pub fn sign_call_from_mnemonic65(
+    mnemonic: &str,
+    call: &[u8],
+    context: JsValue,
+    account: u32,
+) -> Result<Vec<u8>, JsError> {
+    let pair = qp_rusty_crystals_hdwallet::ml_dsa_65::derive_key_from_mnemonic(
+        mnemonic,
+        None,
+        &quantus_path(account, 0, 1),
+    )
+    .map_err(|_| JsError::new("mnemonic derivation failed"))?;
+    let ctx = crate::build_sign_context_from_value(context)?;
+    ext::sign_call_with_keypair65(&pair, call, &ctx).map_err(crate::to_js_error)
+}

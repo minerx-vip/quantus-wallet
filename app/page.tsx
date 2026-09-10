@@ -54,8 +54,14 @@ import {
   parseEnvelope,
   type Session,
   type WalletRecord,
+  type Derivation,
 } from '@/lib/wallet/vault';
-import { newMnemonic, deriveWallet } from '@/lib/wallet/crypto';
+import {
+  newMnemonic,
+  deriveWallet,
+  matchMnemonic,
+  derivationLabel,
+} from '@/lib/wallet/crypto';
 import {
   getBalance,
   chainState,
@@ -84,6 +90,7 @@ type Flow =
   | 'backup'
   | 'verify'
   | 'import'
+  | 'importConfirm'
   | 'receive'
   | 'send'
   | 'settings'
@@ -107,6 +114,8 @@ export default function Home() {
     [secret, setSecret] = useState(''),
     [importType, setImportType] = useState<'mnemonic' | 'seed'>('mnemonic'),
     [accountIndex, setAccountIndex] = useState(0),
+    [derivation, setDerivation] = useState<Derivation>('hd65'),
+    [expectedAddress, setExpectedAddress] = useState(''),
     [draft, setDraft] = useState<WalletRecord | null>(null),
     [answers, setAnswers] = useState(['', '', '']),
     [confirmed, setConfirmed] = useState(false);
@@ -144,6 +153,7 @@ export default function Home() {
     setPassword('');
     setRepeat('');
     setSecret('');
+    setExpectedAddress('');
     setDraft(null);
     setAnswers(['', '', '']);
     setQuote(null);
@@ -163,6 +173,7 @@ export default function Home() {
     setPassword('');
     setRepeat('');
     setSecret('');
+    setExpectedAddress('');
     setDraft(null);
     setQuote(null);
     setAnswers(['', '', '']);
@@ -362,16 +373,35 @@ export default function Home() {
     setFlow('backup');
   }
   async function importWallet() {
-    const d = await deriveWallet(importType, secret, accountIndex);
+    const active = sessionRef.current;
+    if (!active) throw Error('请先解锁');
     if (!name.trim()) throw Error('请填写钱包名称');
-    await addWallet({
+    const expected = expectedAddress.trim()
+      ? normalizeAddress(expectedAddress.trim())
+      : '';
+    const mode = importType === 'seed' ? 'hd87' : derivation;
+    const index =
+      importType === 'seed' || mode === 'legacy87' ? 0 : accountIndex;
+    const d =
+      importType === 'mnemonic' && expected
+        ? await matchMnemonic(secret, expected, accountIndex)
+        : {
+            ...(await deriveWallet(importType, secret, index, mode)),
+            derivation: mode,
+            accountIndex: index,
+          };
+    if (sessionRef.current !== active)
+      throw Error('保险库已锁定，请重新解锁后导入');
+    if (expected && d.address !== expected)
+      throw Error('派生地址与原地址不一致，未导入钱包');
+    setDraft({
       id: crypto.randomUUID(),
       name: name.trim(),
       ...d,
       type: importType,
-      accountIndex,
       createdAt: new Date().toISOString(),
     });
+    setFlow('importConfirm');
   }
   async function selectWallet(id: string) {
     if (busy) return;
@@ -415,6 +445,7 @@ export default function Home() {
     backup: '备份助记词',
     verify: '确认你的备份',
     import: '导入已有钱包',
+    importConfirm: '核对导入地址',
     receive: '收款',
     send: quote ? '确认转账' : '转出 QTC',
     settings: '本地钱包设置',
@@ -949,7 +980,7 @@ export default function Home() {
                 <ChevronRight />
               </button>
               <p className="notice">
-                当前账户类型为普通 ML-DSA-87 转账地址。Wormhole
+                支持普通 ML-DSA-65 / ML-DSA-87 转账地址。Wormhole
                 挖矿奖励地址使用独立的生成与证明流程，不能作为普通私钥导入。
               </p>
             </div>
@@ -1105,23 +1136,96 @@ export default function Home() {
                   required
                 />
               </label>
-              {importType === 'mnemonic' && (
+              <label>
+                原钱包收款地址（建议填写）
+                <Input
+                  value={expectedAddress}
+                  onChange={(e) => setExpectedAddress(e.target.value)}
+                  placeholder="粘贴 iPhone 钱包的公开收款地址"
+                  autoComplete="off"
+                />
+                <small>
+                  填写后在本机自动匹配账户类型和序号；地址不一致时不会导入。
+                </small>
+              </label>
+              {importType === 'mnemonic' && !expectedAddress.trim() && (
                 <label>
-                  账户序号（通常为 0）
-                  <Input
-                    type="number"
-                    min={0}
-                    max={1000000}
-                    value={accountIndex}
-                    onChange={(e) => setAccountIndex(Number(e.target.value))}
-                  />
-                  <small>派生路径 m/44′/189189′/账户′/0′/0′</small>
+                  原钱包账户类型
+                  <select
+                    value={derivation}
+                    onChange={(e) =>
+                      setDerivation(e.target.value as Derivation)
+                    }
+                    className="derivation-select"
+                  >
+                    {(['hd65', 'hd87', 'legacy87'] as Derivation[]).map((d) => (
+                      <option key={d} value={d}>
+                        {derivationLabel(d)}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               )}
+              {importType === 'mnemonic' &&
+                (expectedAddress.trim() || derivation !== 'legacy87') && (
+                  <label>
+                    账户序号（通常为 0）
+                    <Input
+                      type="number"
+                      min={0}
+                      max={1000000}
+                      value={accountIndex}
+                      onChange={(e) => setAccountIndex(Number(e.target.value))}
+                    />
+                    <small>
+                      {expectedAddress.trim()
+                        ? '自动匹配将检查 0–19 及指定序号，全程在本机完成。'
+                        : `派生路径 m/44′/189189′/账户′/0′/${derivation === 'hd65' ? 1 : 0}′`}
+                    </small>
+                  </label>
+                )}
+              <p className="notice">
+                本页导入普通转账账户。Wormhole
+                挖矿奖励地址不能作为普通账户导入。保险库密码只用于本地加密，不会改变收款地址。
+              </p>
               <Button type="submit" className="full" disabled={busy}>
-                {busy ? '正在本地验证…' : '验证并导入'}
+                {busy ? '正在本地匹配…' : '验证并导入'}
               </Button>
             </form>
+          )}
+          {flow === 'importConfirm' && draft && (
+            <>
+              <p className="notice">
+                请与原钱包的收款地址逐字核对。确认后才会加密保存。
+              </p>
+              <code className="receive-address">{draft.address}</code>
+              <p>
+                {draft.type === 'seed'
+                  ? '私钥种子 · ML-DSA-87'
+                  : derivationLabel(draft.derivation)}{' '}
+                · 账户序号 {draft.accountIndex}
+              </p>
+              {expectedAddress.trim() && (
+                <p className="notice">已匹配原钱包地址</p>
+              )}
+              <Button
+                className="full"
+                disabled={busy}
+                onClick={() => void act(() => addWallet(draft))}
+              >
+                地址一致，确认导入
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={() => {
+                  setDraft(null);
+                  setFlow('import');
+                }}
+              >
+                返回修改
+              </Button>
+            </>
           )}
           {flow === 'receive' && (
             <>

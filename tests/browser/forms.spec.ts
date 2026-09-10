@@ -161,6 +161,9 @@ test('seed import, transfer validation and encrypted backup restore submit on cl
     .getByLabel('32 字节私钥种子', { exact: true })
     .fill('00'.repeat(32));
   await page.getByRole('button', { name: '验证并导入', exact: true }).click();
+  await page
+    .getByRole('button', { name: '地址一致，确认导入', exact: true })
+    .click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(
     page.getByRole('heading', { name: '导入钱包', exact: true }),
@@ -208,4 +211,55 @@ test('seed import, transfer validation and encrypted backup restore submit on cl
   await expect(
     page.getByRole('heading', { name: '导入钱包', exact: true }),
   ).toBeVisible();
+});
+
+test('official phone mnemonic matches original address locally before save and survives refresh', async ({
+  page,
+}) => {
+  const mnemonic =
+    'orchard answer curve patient visual flower maze noise retreat penalty cage small earth domain scan pitch bottom crunch theme club client swap slice raven';
+  const original = 'qzmTuBUzGHX7tohwjJHASSbCt64cJt6WC6j6v1SHpMTL77UyB';
+  const requests: string[] = [];
+  page.on('request', (request) =>
+    requests.push(request.url() + (request.postData() ?? '')),
+  );
+  await page
+    .getByRole('button', { name: '添加钱包', exact: true })
+    .first()
+    .click();
+  await page.getByLabel('保险库密码', { exact: true }).fill('test1234');
+  await page.getByLabel('再次输入密码').fill('test1234');
+  await page.getByRole('button', { name: '创建保险库', exact: true }).click();
+  await page.getByRole('button', { name: /导入已有钱包/ }).click();
+  await page.getByLabel('英文助记词').fill(mnemonic);
+  const before = await page.evaluate(() =>
+    localStorage.getItem('quantus.wallet.v1'),
+  );
+  await page.getByLabel('原钱包收款地址').fill(recipient);
+  await page.getByRole('button', { name: '验证并导入', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('alert')).toContainText(
+    '未匹配到原地址',
+  );
+  expect(
+    await page.evaluate(() => localStorage.getItem('quantus.wallet.v1')),
+  ).toBe(before);
+  await page.getByLabel('原钱包收款地址').fill(original);
+  await page.getByRole('button', { name: '验证并导入', exact: true }).click();
+  await expect(
+    page.getByText('已匹配原钱包地址', { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.receive-address')).toHaveText(original);
+  expect(
+    requests.some((r) => r.includes(mnemonic) || r.includes(original)),
+  ).toBe(false);
+  await page
+    .getByRole('button', { name: '地址一致，确认导入', exact: true })
+    .click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.reload();
+  await page.getByLabel('保险库密码', { exact: true }).fill('test1234');
+  await page.getByRole('button', { name: '解锁', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: '收款', exact: true }).click();
+  await expect(page.locator('.receive-address')).toHaveText(original);
 });

@@ -1,7 +1,11 @@
 // Read-only integration check. Never submits a transaction or uses a real secret.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import init, { account, signCall } from '../crypto/pkg/quantus_wasm.js';
+import init, {
+  account,
+  signCall,
+  signCallFromMnemonic65,
+} from '../crypto/pkg/quantus_wasm.js';
 import {
   getApi,
   getBalance,
@@ -48,6 +52,25 @@ try {
     feeOnlyExtrinsic('0x' + Buffer.from(xt).toString('hex')),
   ]);
   assert(BigInt(fee.partialFee) > 0n);
+  const xt65 = signCallFromMnemonic65(
+    'orchard answer curve patient visual flower maze noise retreat penalty cage small earth domain scan pitch bottom crunch theme club client swap slice raven',
+    call,
+    {
+      nonce: 0,
+      tip: '0',
+      period: 64,
+      blockNumber: state.height,
+      genesisHash: GENESIS,
+      blockHash: hash,
+      ...version,
+    },
+    0,
+  );
+  const fee65 = await rpc<{ partialFee: string }>('payment_queryInfo', [
+    feeOnlyExtrinsic('0x' + Buffer.from(xt65).toString('hex')),
+  ]);
+  assert(BigInt(fee65.partialFee) > 0n);
+
   console.log(
     JSON.stringify({
       height: state.height,
@@ -56,6 +79,7 @@ try {
       historyCount: records.count,
       call: Buffer.from(call).toString('hex'),
       fee: fee.partialFee,
+      fee65: fee65.partialFee,
       submitted: false,
     }),
   );

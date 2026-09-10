@@ -9,7 +9,7 @@
 - 多钱包创建、导入、切换、重命名、移除。
 - 浏览器生成 24 个英文助记词，备份后抽查 3 个单词再保存。
 - 支持有效 BIP39 英文助记词和 **32 字节私钥种子**（64 位十六进制，可带 `0x`）。不支持直接导入 4896 字节展开私钥。
-- 普通 ML-DSA-87 账户，HD 路径 `m/44'/189189'/account'/0'/0'`。
+- 普通 ML-DSA-65 / ML-DSA-87 账户，HD 路径 `m/44'/189189'/account'/0'/0'`。
 - 查询余额、转入/转出及系统入账，分页，时区 UTC−12 至 UTC+14，默认 UTC+8。
 - 本地签名、手续费预览、用户确认后广播 `balances.transferKeepAlive`。
 - AES-256-GCM 本地保险库（密码至少 8 位）、加密文件备份与恢复、闲置 5 分钟自动锁定。
@@ -63,3 +63,12 @@ wasm-bindgen crypto/target/wasm32-unknown-unknown/release/quantus_wasm.wasm --ou
 ```
 
 本项目采用 MIT 许可，详见 `LICENSE`；上游密码学代码另见 `crypto/LICENSE`。
+
+
+### 与官方手机钱包恢复同一地址
+
+助记词导入支持官方手机钱包的 HD ML-DSA-65（路径末位 1′）、HD ML-DSA-87（末位 0′）以及早期非 HD ML-DSA-87。填写原钱包公开收款地址后，网页会在本机匹配两种 HD 类型的 0–19 及指定账户序号，再核对早期非 HD 类型；不会发送助记词或候选地址。未匹配时不保存，匹配后仍需确认完整地址。
+
+已保存的钱包没有新类型字段时仍按原来的 HD ML-DSA-87 恢复，不会自动更换地址。账户类型加密保存并用于后续签名；备份恢复后保持不变。暂不支持 BIP39 附加密码、自定义完整派生路径或 Wormhole 支出。
+
+兼容性向量来自[官方手机钱包测试](https://github.com/Quantus-Network/quantus-apps/blob/76df7b06d7a092c9cdfb9a459f8effb9ddb5e737/quantus_sdk/test/generate_keys_test.dart)，覆盖两种 HD 类型的账户 0 / 1 与早期非 HD 地址。

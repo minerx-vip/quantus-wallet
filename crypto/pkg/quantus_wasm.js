@@ -106,6 +106,22 @@ export function accountFromMnemonic(mnemonic, account, change, address_index, pa
 }
 
 /**
+ * Current official mobile-wallet ML-DSA-65 path (scheme slot 1).
+ * @param {string} mnemonic
+ * @param {number} account
+ * @returns {Account}
+ */
+export function accountFromMnemonic65(mnemonic, account) {
+    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.accountFromMnemonic65(ptr0, len0, account);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return Account.__wrap(ret[0]);
+}
+
+/**
  * BIP39 mnemonic -> 64-byte seed (bridge to the seed-based API).
  * @param {string} mnemonic
  * @param {string | null} [passphrase]
@@ -172,6 +188,27 @@ export function signCallFromMnemonic(mnemonic, call, context, account, change, a
     var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v4;
+}
+
+/**
+ * @param {string} mnemonic
+ * @param {Uint8Array} call
+ * @param {any} context
+ * @param {number} account
+ * @returns {Uint8Array}
+ */
+export function signCallFromMnemonic65(mnemonic, call, context, account) {
+    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(call, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.signCallFromMnemonic65(ptr0, len0, ptr1, len1, context, account);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
 }
 
 /**

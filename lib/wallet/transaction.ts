@@ -6,16 +6,19 @@ export function feeOnlyExtrinsic(encoded: string): string {
   );
   const mode = bytes[0] & 3;
   const prefix = [1, 2, 4][mode];
+  const variant = bytes[prefix + 34];
+  const signatureLength = variant === 0 ? 4627 : variant === 1 ? 3309 : 0;
+  const publicLength = variant === 0 ? 2592 : 1952;
   if (
     !prefix ||
     bytes[prefix] !== 0x84 ||
     bytes[prefix + 1] !== 0 ||
-    bytes[prefix + 34] !== 0 ||
-    bytes.length < prefix + 35 + 4627 + 2592
+    !signatureLength ||
+    bytes.length < prefix + 35 + signatureLength + publicLength
   ) {
     throw Error('Unsupported extrinsic format');
   }
-  bytes.fill(0, prefix + 35, prefix + 35 + 4627);
+  bytes.fill(0, prefix + 35, prefix + 35 + signatureLength);
   return (
     '0x' + Array.from(bytes, (v) => v.toString(16).padStart(2, '0')).join('')
   );
