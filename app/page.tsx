@@ -19,6 +19,8 @@ import {
   Upload,
   ArrowLeft,
   Search,
+  MoreHorizontal,
+  Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,6 +48,12 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import {
   VAULT_KEY,
   createVault,
@@ -95,6 +103,7 @@ type Flow =
   | 'send'
   | 'settings'
   | 'remove'
+  | 'rename'
   | 'restore';
 const short = (s: string) =>
   s.length > 24 ? s.slice(0, 12) + '…' + s.slice(-10) : s;
@@ -116,6 +125,7 @@ export default function Home() {
     [accountIndex, setAccountIndex] = useState(0),
     [derivation, setDerivation] = useState<Derivation>('hd65'),
     [expectedAddress, setExpectedAddress] = useState(''),
+    [manageId, setManageId] = useState(''),
     [draft, setDraft] = useState<WalletRecord | null>(null),
     [answers, setAnswers] = useState(['', '', '']),
     [confirmed, setConfirmed] = useState(false);
@@ -144,7 +154,8 @@ export default function Home() {
   const generation = useRef(0),
     lookupRef = useRef('');
   const w = session?.data.wallets.find((x) => x.id === session.data.selectedId),
-    address = lookupAddress || w?.address || '';
+    address = lookupAddress || w?.address || '',
+    managed = session?.data.wallets.find((x) => x.id === manageId);
   const setCurrent = (s: Session | null) => {
     sessionRef.current = s;
     setSession(s);
@@ -154,6 +165,7 @@ export default function Home() {
     setRepeat('');
     setSecret('');
     setExpectedAddress('');
+    setManageId('');
     setDraft(null);
     setAnswers(['', '', '']);
     setQuote(null);
@@ -174,6 +186,7 @@ export default function Home() {
     setRepeat('');
     setSecret('');
     setExpectedAddress('');
+    setManageId('');
     setDraft(null);
     setQuote(null);
     setAnswers(['', '', '']);
@@ -412,6 +425,13 @@ export default function Home() {
       setQuote(null);
     });
   }
+  function manageWallet(record: WalletRecord, action: 'rename' | 'remove') {
+    setManageId(record.id);
+    setName(record.name);
+    setConfirmed(false);
+    setError('');
+    setFlow(action);
+  }
   function downloadBackup() {
     const raw = localStorage.getItem(VAULT_KEY);
     if (!raw) return;
@@ -450,6 +470,7 @@ export default function Home() {
     send: quote ? '确认转账' : '转出 QTC',
     settings: '本地钱包设置',
     remove: '移除此钱包',
+    rename: '重命名钱包',
     restore: '恢复加密备份',
   };
   return (
@@ -494,36 +515,119 @@ export default function Home() {
           </h2>
           <div className="wallet-list">
             {session?.data.wallets.map((x) => (
-              <button
+              <div
                 key={x.id}
-                disabled={busy}
                 className={
                   'wallet-item ' +
                   (x.id === w?.id && !lookupAddress ? 'selected' : '')
                 }
-                onClick={() => void selectWallet(x.id)}
               >
-                <span className="wallet-avatar">
-                  <Wallet size={18} />
-                </span>
-                <span>
-                  <strong>{x.name}</strong>
-                  <small>{short(x.address)}</small>
-                </span>
-                {x.id === w?.id && !lookupAddress && <i />}
-              </button>
+                <button
+                  className="wallet-select"
+                  disabled={busy}
+                  onClick={() => void selectWallet(x.id)}
+                  aria-pressed={x.id === w?.id && !lookupAddress}
+                >
+                  <span className="wallet-avatar">
+                    <Wallet size={18} />
+                  </span>
+                  <span className="wallet-item-text">
+                    <strong>{x.name}</strong>
+                  </span>
+                  <small className="wallet-full-address">{x.address}</small>
+                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    className="wallet-menu"
+                    aria-label={`管理钱包 ${x.name}`}
+                    disabled={busy}
+                  >
+                    <MoreHorizontal size={18} />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    className="wallet-menu-content"
+                  >
+                    <DropdownMenuItem onClick={() => manageWallet(x, 'rename')}>
+                      <Pencil /> 重命名
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => manageWallet(x, 'remove')}
+                    >
+                      <Trash2 /> 移除钱包
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             ))}
           </div>
           <Button className="add-wallet" variant="outline" onClick={openAdd}>
             <Plus size={18} /> {exists && !session ? '解锁钱包' : '添加钱包'}
           </Button>
-          <div className="rail-note">
-            <ShieldCheck size={20} />
-            <div>
-              只属于你的设备
-              <p>钱包资料仅在当前浏览器加密保存。闲置 5 分钟自动锁定。</p>
+          <aside className="security-statement" aria-label="安全声明">
+            <div className="security-title">
+              <ShieldCheck size={17} />
+              <strong>安全声明</strong>
             </div>
-          </div>
+            <p className="security-intro">
+              钱包仅在此浏览器加密保存。
+              <br />
+              闲置 5 分钟自动锁定。
+            </p>
+            <div className="security-links">
+              <a
+                href="https://rpc1-mainnet.quantus.com"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span className="security-dot" />
+                连接官方主网节点 <span>↗</span>
+              </a>
+              <a
+                href="https://github.com/minerx-vip/quantus-wallet"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span className="security-dot" />
+                程序开源 · GitHub <span>↗</span>
+              </a>
+            </div>
+            <p className="security-risk">
+              使用与资产损失风险自行承担，请妥善备份。
+            </p>
+            <details className="security-details">
+              <summary>查看完整声明</summary>
+              <p>
+                本工具由社区开发，按现状提供，未经独立安全审计。请自行备份并核对交易。
+              </p>
+              <p>
+                查询会向官方服务发送公开地址，转账发送已签名交易；助记词、私钥与密码不会上传。
+              </p>
+              <p>
+                连接{' '}
+                <a
+                  href="https://rpc2-mainnet.quantus.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  官方备用节点
+                </a>{' '}
+                与{' '}
+                <a
+                  href="https://sqm.quantus.com/v1/graphql"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  官方交易索引服务
+                </a>
+                。
+              </p>
+              <p>
+                清除站点数据前，请下载加密备份。源码：minerx-vip/quantus-wallet。
+              </p>
+            </details>
+          </aside>
           <form
             className="lookup"
             onSubmit={(e) => {
@@ -591,78 +695,129 @@ export default function Home() {
               </button>
             </p>
           )}
-          <section className="balance-panel">
-            <div className="balance-label">可用余额</div>
-            <div className="balance">
-              {balance ? (
-                formatQtc(balance.spendable)
-              ) : address ? (
-                <span>
-                  {balanceLoading ? '查询中…' : networkError ? '查询失败' : '—'}
-                </span>
-              ) : (
-                '—'
-              )}{' '}
-              <span>QTC</span>
+          <section className="balance-panel" aria-label="账户资产">
+            <div className="balance-header">
+              <div className="balance-label">可用余额</div>
+              <span className="asset-badge">
+                <span>Q</span> Quantus · QTC
+              </span>
             </div>
-            {address ? (
-              <button
-                className="address"
-                onClick={() => void copy(address)}
-                title={address}
-              >
-                {short(address)} <Copy size={14} />
-              </button>
-            ) : (
-              <p>{exists ? '解锁后查询链上余额' : '添加钱包后查询链上余额'}</p>
-            )}
-            {balance && (
-              <p className="balance-detail">
-                总余额 {formatQtc(balance.free + balance.reserved)} · 冻结{' '}
-                {formatQtc(balance.frozen)} · 预留 {formatQtc(balance.reserved)}
-              </p>
-            )}
-            <div className="actions">
-              <Button
-                disabled={!!lookupAddress}
-                onClick={() => {
-                  if (!w) {
-                    openAdd();
-                    return;
-                  }
-                  setError('');
-                  setQuote(null);
-                  setRecipient('');
-                  setAmount('');
-                  setFlow('send');
-                }}
-              >
-                <ArrowUpRight /> 转出
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => (address ? setFlow('receive') : openAdd())}
-              >
-                <ArrowDownLeft /> 收款
-              </Button>
+            <div className="balance-primary">
+              <div className="balance-overview">
+                <div
+                  className="balance"
+                  aria-live="polite"
+                  aria-busy={balanceLoading}
+                >
+                  <span
+                    className={
+                      balance ? 'balance-number' : 'balance-placeholder'
+                    }
+                    title={balance ? formatQtc(balance.spendable) : undefined}
+                  >
+                    {balance
+                      ? formatQtc(balance.spendable)
+                      : address
+                        ? balanceLoading
+                          ? '查询中…'
+                          : networkError
+                            ? '查询失败'
+                            : '—'
+                        : '—'}
+                  </span>{' '}
+                  <span className="balance-unit">QTC</span>
+                </div>
+                <div className="address-line">
+                  {address ? (
+                    <button
+                      className="address"
+                      onClick={() => void copy(address)}
+                      title={address}
+                    >
+                      <span>{address}</span> <Copy size={14} />
+                    </button>
+                  ) : (
+                    <p>
+                      {exists ? '解锁后查询链上余额' : '添加钱包后查询链上余额'}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="actions">
+                <Button
+                  disabled={!!lookupAddress}
+                  onClick={() => {
+                    if (!w) {
+                      openAdd();
+                      return;
+                    }
+                    setError('');
+                    setQuote(null);
+                    setRecipient('');
+                    setAmount('');
+                    setFlow('send');
+                  }}
+                >
+                  <ArrowUpRight /> 转出
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => (address ? setFlow('receive') : openAdd())}
+                >
+                  <ArrowDownLeft /> 收款
+                </Button>
+              </div>
             </div>
-            <span className="balance-watermark">Q</span>
+            <dl className="balance-details">
+              {[
+                [
+                  '总余额',
+                  balance ? formatQtc(balance.free + balance.reserved) : '—',
+                ],
+                ['冻结', balance ? formatQtc(balance.frozen) : '—'],
+                ['预留', balance ? formatQtc(balance.reserved) : '—'],
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd title={value}>
+                    {value}
+                    <span> QTC</span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </section>
-          {networkError && (
-            <p className="error" role="alert">
-              {networkError}，未显示缓存余额。
-            </p>
-          )}
-          {chainError && (
-            <p className="notice">节点状态查询失败：{chainError}</p>
-          )}
-          {chain && (
-            <div className="chain-status">
-              <i />
-              {chain.height >= chain.highest ? '主网已同步' : '节点追块中'} · #
-              {chain.height.toLocaleString()} <span>{chain.peers} 个连接</span>
+          <div className="connection-strip">
+            <div
+              className="chain-status"
+              title={chainError || '连接 Quantus 官方主网节点'}
+            >
+              <i
+                className={
+                  chainError ? 'status-warning' : !chain ? 'status-pending' : ''
+                }
+              />
+              {chainError
+                ? '节点状态暂不可用'
+                : chain
+                  ? `${chain.height >= chain.highest ? '主网已同步' : '节点追块中'} · #${chain.height.toLocaleString()}`
+                  : '官方主网节点'}
             </div>
-          )}
+            {networkError ? (
+              <details className="query-error">
+                <summary>余额查询失败 · 查看原因</summary>
+                <p role="alert">{networkError}，未显示缓存余额。</p>
+              </details>
+            ) : (
+              <span className="connection-note">
+                {balanceLoading
+                  ? '正在同步资产'
+                  : balance
+                    ? '链上实时数据'
+                    : '本地加密保管'}
+              </span>
+            )}
+          </div>
           {pending
             .filter((p) => p.walletId === w?.id)
             .map((p) => (
@@ -673,7 +828,9 @@ export default function Home() {
               </p>
             ))}
           <div className="section-heading">
-            <h2>交易记录</h2>
+            <h2>
+              交易记录 <span className="section-caption">ACTIVITY</span>
+            </h2>
             <div className="timezone">
               <Select
                 value={String(timezone)}
@@ -698,6 +855,7 @@ export default function Home() {
           </div>
           {address && (
             <Tabs
+              className="history-filters"
               value={direction}
               onValueChange={(v) => {
                 setDirection(v as typeof direction);
@@ -829,7 +987,13 @@ export default function Home() {
             </>
           ) : (
             <section className="empty-state">
-              <ArrowDownLeft size={28} />
+              <span className="empty-icon">
+                {historyLoading ? (
+                  <RefreshCw size={22} className="spinning" />
+                ) : (
+                  <ArrowDownLeft size={22} />
+                )}
+              </span>
               <h3>
                 {historyLoading ? '正在查询链上记录' : '暂无匹配的转账记录'}
               </h3>
@@ -840,50 +1004,7 @@ export default function Home() {
           )}
         </section>
       </div>
-      <footer className="security-statement" aria-label="安全声明">
-        <strong>安全声明</strong>
-        <p>
-          本工具由社区开发，按现状提供，未经独立安全审计。请自行备份并核对交易，使用及资产损失风险由用户自行承担。
-        </p>
-        <p>
-          连接{' '}
-          <a
-            href="https://rpc1-mainnet.quantus.com"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Quantus 官方主网节点
-          </a>
-          （
-          <a
-            href="https://rpc2-mainnet.quantus.com"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            官方备用节点
-          </a>
-          ）与{' '}
-          <a
-            href="https://sqm.quantus.com/v1/graphql"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            官方交易索引服务
-          </a>
-          。查询会发送公开地址；确认转账后发送签名交易。助记词、私钥与密码不会上传。
-        </p>
-        <p>
-          程序开源：
-          <a
-            href="https://github.com/minerx-vip/quantus-wallet"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            GitHub · minerx-vip/quantus-wallet ↗
-          </a>
-          。钱包资料仅在当前浏览器加密保存，清除站点数据前请下载备份。
-        </p>
-      </footer>
+
       <Dialog
         open={flow !== 'none'}
         onOpenChange={(v) => {
@@ -1341,49 +1462,21 @@ export default function Home() {
                 </Button>
               )}
               {w && (
-                <>
-                  <label>
-                    钱包名称
-                    <Input
-                      value={name || w.name}
-                      maxLength={40}
-                      onChange={(e) => setName(e.target.value)}
-                    />
-                  </label>
+                <div className="settings-wallet-actions">
                   <Button
-                    disabled={busy}
                     variant="outline"
-                    onClick={() =>
-                      void act(async () => {
-                        if (!(name || w.name).trim())
-                          throw Error('钱包名称不能为空');
-                        await save({
-                          ...session!.data,
-                          wallets: session!.data.wallets.map((x) =>
-                            x.id === w.id
-                              ? { ...x, name: (name || w.name).trim() }
-                              : x,
-                          ),
-                        });
-                        setMessage('名称已更新');
-                        setName('');
-                        setFlow('none');
-                      })
-                    }
+                    onClick={() => manageWallet(w, 'rename')}
                   >
-                    保存名称
+                    <Pencil /> 重命名当前钱包
                   </Button>
                   <Button
                     variant="ghost"
                     className="danger"
-                    onClick={() => {
-                      setConfirmed(false);
-                      setFlow('remove');
-                    }}
+                    onClick={() => manageWallet(w, 'remove')}
                   >
-                    <Trash2 /> 移除此钱包
+                    <Trash2 /> 移除当前钱包
                   </Button>
-                </>
+                </div>
               )}
               <p className="small-note">
                 查询仅发送公开地址；转账发送已签名交易。无统计脚本、无云端钱包账户。Wormhole
@@ -1391,12 +1484,50 @@ export default function Home() {
               </p>
             </>
           )}
-          {flow === 'remove' && w && (
+          {flow === 'rename' && managed && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void act(async () => {
+                  const active = sessionRef.current;
+                  if (!active) throw Error('请先解锁钱包');
+                  if (!name.trim()) throw Error('钱包名称不能为空');
+                  await save({
+                    ...active.data,
+                    wallets: active.data.wallets.map((x) =>
+                      x.id === managed.id ? { ...x, name: name.trim() } : x,
+                    ),
+                  });
+                  setFlow('none');
+                  clearSensitive();
+                  setMessage('钱包名称已更新');
+                });
+              }}
+            >
+              <p className="small-note">
+                只修改本地显示名称，收款地址保持不变。
+              </p>
+              <label>
+                钱包名称
+                <Input
+                  value={name}
+                  maxLength={40}
+                  autoFocus
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </label>
+              <Button type="submit" disabled={busy} className="full">
+                保存名称
+              </Button>
+            </form>
+          )}
+          {flow === 'remove' && managed && (
             <>
               <p className="notice">
-                将从本机移除「{w.name}
+                将从当前浏览器移除「{managed.name}
                 」。链上资金不受影响，恢复钱包需要助记词、私钥或加密备份。
               </p>
+              <code className="receive-address">{managed.address}</code>
               <label className="check-label">
                 <Checkbox
                   checked={confirmed}
@@ -1409,15 +1540,24 @@ export default function Home() {
                 variant="destructive"
                 onClick={() =>
                   void act(async () => {
-                    const remaining = session!.data.wallets.filter(
-                      (x) => x.id !== w.id,
+                    const active = sessionRef.current;
+                    if (!active) throw Error('请先解锁钱包');
+                    const remaining = active.data.wallets.filter(
+                      (x) => x.id !== managed.id,
                     );
                     await save({
                       wallets: remaining,
-                      selectedId: remaining[0]?.id ?? '',
+                      selectedId:
+                        active.data.selectedId === managed.id
+                          ? (remaining[0]?.id ?? '')
+                          : active.data.selectedId,
                     });
+                    setPending((p) =>
+                      p.filter((x) => x.walletId !== managed.id),
+                    );
                     setFlow('none');
-                    setMessage('已从本机移除钱包');
+                    clearSensitive();
+                    setMessage('已从当前浏览器移除钱包');
                   })
                 }
               >
@@ -1438,6 +1578,7 @@ export default function Home() {
                       x.type,
                       x.secret,
                       x.accountIndex,
+                      x.derivation ?? 'hd87',
                     );
                     if (d.address !== x.address)
                       throw Error('备份中的地址与密钥不匹配');

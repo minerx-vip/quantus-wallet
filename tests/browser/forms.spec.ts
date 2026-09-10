@@ -1,6 +1,7 @@
 import fixture from '../fixtures/mainnet-readonly-rpc.json' with { type: 'json' };
 import { test, expect } from '@playwright/test';
 import { encodeAddress } from '@polkadot/util-crypto';
+import { createVault, seal } from '../../lib/wallet/vault';
 const recipient = encodeAddress(new Uint8Array(32), 189);
 test('balance uses the second official node and displays before a slow history service', async ({
   page,
@@ -71,19 +72,20 @@ test('timezone shows its full label before opening and after selecting or reload
     'UTC−05:00',
   );
 });
-test('empty wallet keeps the safety statement close to content', async ({
+test('security statement lives in the wallet rail with visible official and source links', async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1440, height: 1080 });
-  await page.goto('./');
-  const statement = page.getByLabel('安全声明', { exact: true });
-  const box = await statement.boundingBox();
-  expect(box).not.toBeNull();
-  expect(box!.y + box!.height).toBeLessThanOrEqual(1080);
-  const content = await page
-    .locator('.wallet-main > :last-child')
-    .boundingBox();
-  expect(box!.y - (content!.y + content!.height)).toBeLessThanOrEqual(32);
+  const rail = page.locator('.wallet-rail');
+  const statement = rail.getByLabel('安全声明', { exact: true });
+  await expect(statement).toBeVisible();
+  await expect(
+    statement.getByRole('link', { name: /连接官方主网节点/ }),
+  ).toBeVisible();
+  await expect(statement.getByRole('link', { name: /程序开源/ })).toBeVisible();
+  await expect(statement).toContainText('使用与资产损失风险自行承担');
+  await expect(page.locator('footer.security-statement')).toHaveCount(0);
+  await statement.getByText('查看完整声明', { exact: true }).click();
+  await expect(statement.getByText(/助记词、私钥与密码不会上传/)).toBeVisible();
 });
 test.beforeEach(async ({ page }) => {
   // Deterministic offline UI tests: no wallet data or transaction leaves the browser.
@@ -215,7 +217,7 @@ test('seed import, transfer validation and encrypted backup restore submit on cl
 
 test('official phone mnemonic matches original address locally before save and survives refresh', async ({
   page,
-}) => {
+}, testInfo) => {
   const mnemonic =
     'orchard answer curve patient visual flower maze noise retreat penalty cage small earth domain scan pitch bottom crunch theme club client swap slice raven';
   const original = 'qzmTuBUzGHX7tohwjJHASSbCt64cJt6WC6j6v1SHpMTL77UyB';
@@ -262,4 +264,165 @@ test('official phone mnemonic matches original address locally before save and s
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('button', { name: '收款', exact: true }).click();
   await expect(page.locator('.receive-address')).toHaveText(original);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '钱包设置' }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: '下载加密备份' }).click();
+  const file = testInfo.outputPath('hd65-test-backup.json');
+  await (await download).saveAs(file);
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.getByRole('button', { name: '从加密备份恢复' }).click();
+  await page.getByLabel('选择本机加密备份').setInputFiles(file);
+  await page.getByLabel('该备份的保险库密码').fill('test1234');
+  await page.getByRole('button', { name: '在本机解密并恢复' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('.wallet-full-address')).toHaveText(original);
+});
+
+for (const width of [1440, 390]) {
+  test(`asset card stays fixed through loading, zero and error at ${width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let failed = false;
+    const responses = fixture as Record<string, unknown>;
+    await page.route(
+      /^https:\/\/rpc[12]-mainnet\.quantus\.com\//,
+      async (route) => {
+        await blocked;
+        const request = route.request().postDataJSON();
+        const key = JSON.stringify([request.method, request.params]);
+        await route.fulfill({
+          json: failed
+            ? {
+                jsonrpc: '2.0',
+                id: request.id,
+                error: { code: -32000, message: 'Test unavailable' },
+              }
+            : { jsonrpc: '2.0', id: request.id, result: responses[key] },
+        });
+      },
+    );
+    await page.route('https://sqm.quantus.com/**', (route) =>
+      route.fulfill({
+        json: {
+          data: {
+            transfer: [],
+            transfer_aggregate: { aggregate: { count: 0 } },
+          },
+        },
+      }),
+    );
+    await page.getByLabel('查询公开地址').fill(recipient);
+    await page.getByRole('button', { name: '查询地址', exact: true }).click();
+    await expect(page.locator('.balance')).toContainText('查询中');
+    const measure = async () =>
+      Promise.all(
+        ['.balance-panel', '.balance', '.section-heading'].map((s) =>
+          page.locator(s).boundingBox(),
+        ),
+      );
+    const loading = await measure();
+    release();
+    await expect(page.locator('.balance')).toHaveText('0 QTC');
+    expect(await measure()).toEqual(loading);
+    await page.screenshot({
+      path: testInfo.outputPath(`dashboard-${width}.png`),
+      fullPage: true,
+    });
+    failed = true;
+    await page.getByRole('button', { name: '刷新余额' }).click();
+    await expect(page.locator('.balance')).toContainText('查询失败');
+    expect(await measure()).toEqual(loading);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+  });
+}
+
+test('each wallet can be renamed or removed without changing the other wallet', async ({
+  page,
+}, testInfo) => {
+  const phrase =
+    'orchard answer curve patient visual flower maze noise retreat penalty cage small earth domain scan pitch bottom crunch theme club client swap slice raven';
+  const addresses = [
+    'qzoyC4eRTrexYoutXABVsf61QJZxJim3iWvayRQwEjXWgA4mw',
+    'qzmTuBUzGHX7tohwjJHASSbCt64cJt6WC6j6v1SHpMTL77UyB',
+  ];
+  const session = await createVault('test1234');
+  const raw = await seal(session, {
+    selectedId: '1',
+    wallets: addresses.map((address, index) => ({
+      id: String(index),
+      name: `账户 ${index}`,
+      address,
+      secret: phrase,
+      type: 'mnemonic',
+      derivation: 'hd65',
+      accountIndex: index,
+      createdAt: '',
+    })),
+  });
+  await page.evaluate(
+    (value) => localStorage.setItem('quantus.wallet.v1', value),
+    raw,
+  );
+  await page.reload();
+  const unlockPage = async () => {
+    await page.getByLabel('保险库密码', { exact: true }).fill('test1234');
+    await page.getByRole('button', { name: '解锁', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  };
+  await unlockPage();
+  await expect(page.locator('.wallet-full-address')).toHaveText(addresses);
+  await expect(page.locator('.address')).toHaveText(addresses[1]);
+  await page.screenshot({
+    path: testInfo.outputPath('wallet-management.png'),
+    fullPage: true,
+  });
+  await page
+    .getByRole('button', { name: '管理钱包 账户 0', exact: true })
+    .click();
+  await page.getByRole('menuitem', { name: '重命名', exact: true }).click();
+  await page.getByLabel('钱包名称', { exact: true }).fill('');
+  await page.getByRole('button', { name: '保存名称', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('钱包名称不能为空');
+  await page.getByLabel('钱包名称', { exact: true }).fill('我的矿工钱包');
+  await page.getByRole('button', { name: '保存名称', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(
+    page.getByRole('heading', { name: '账户 1', exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await unlockPage();
+  await page
+    .getByRole('button', { name: '管理钱包 我的矿工钱包', exact: true })
+    .click();
+  await page.getByRole('menuitem', { name: '移除钱包', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: '确认移除', exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.wallet-item')).toHaveCount(2);
+  for (const name of ['我的矿工钱包', '账户 1']) {
+    await page
+      .getByRole('button', { name: `管理钱包 ${name}`, exact: true })
+      .click();
+    await page.getByRole('menuitem', { name: '移除钱包', exact: true }).click();
+    await page.getByRole('checkbox', { name: '我已备份该钱包' }).check();
+    await page.getByRole('button', { name: '确认移除', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    if (name === '我的矿工钱包')
+      await expect(page.locator('.address')).toHaveText(addresses[1]);
+  }
+  await page.reload();
+  await page.getByLabel('保险库密码', { exact: true }).fill('test1234');
+  await page.getByRole('button', { name: '解锁', exact: true }).click();
+  await expect(page.getByRole('button', { name: /创建新钱包/ })).toBeVisible();
+  await expect(page.locator('.wallet-item')).toHaveCount(0);
 });
